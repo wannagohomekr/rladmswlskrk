@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>학기중/집중근로 시간표 생성기</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- styles.css -->
+    <link rel="stylesheet" href="styles.css">
+    <!-- ExcelJS & FileSaver CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- Supabase JS & CryptoJS (SHA-256) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-container">
+            <div class="logo-area">
+                <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19 4H5C3.89543 4 3 4.89543 3 6V20C3 21.1046 3.89543 22 5 22H19C20.1046 22 21 21.1046 21 20V6C21 4.89543 20.1046 4 19 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M16 2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M8 2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 10H21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div class="logo-text">
+                    <h1>WorkStudy Scheduler</h1>
+                    <p>학기중근로 & 집중근로 시간표 엑셀 생성기</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="btn-load-sample" class="btn btn-secondary admin-only" style="display: none;">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+                    샘플 로드
+                </button>
+                <button id="btn-export-image" class="btn btn-secondary">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    이미지 저장
+                </button>
+                <button id="btn-export-excel" class="btn btn-primary">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    엑셀 다운로드
+                </button>
+                <button id="btn-admin-login" class="btn btn-accent">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    관리자 로그인
+                </button>
+                <button id="btn-admin-logout" class="btn btn-danger" style="display: none;">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                    로그아웃
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <div class="view-control-bar">
+            <div class="tab-buttons" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <button id="tab-weekly" class="tab-btn active">📅 주간 고정 시간표</button>
+                <button id="tab-monthly" class="tab-btn">🗓️ 월간 달력 시간표</button>
+                <button id="btn-show-current-workers" class="btn btn-accent btn-sm" style="margin-left: 0.75rem; display: inline-flex; align-items: center; gap: 0.35rem;" title="현재 날짜/시간 기준으로 근무 중인 장학생을 확인합니다.">
+                    <span class="pulse-dot"></span>
+                    현재 근무자 확인
+                </button>
+            </div>
+            <div class="month-selector-area" id="month-selector-area" style="display: none;">
+                <select id="select-year">
+                    <option value="2026" selected>2026년</option>
+                    <option value="2027">2027년</option>
+                </select>
+                <select id="select-month">
+                    <option value="1">1월</option>
+                    <option value="2">2월</option>
+                    <option value="3">3월</option>
+                    <option value="4">4월</option>
+                    <option value="5">5월</option>
+                    <option value="6">6월</option>
+                    <option value="7" selected>7월</option>
+                    <option value="8">8월</option>
+                    <option value="9">9월</option>
+                    <option value="10">10월</option>
+                    <option value="11">11월</option>
+                    <option value="12">12월</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="grid-layout">
+            <!-- Left Side: Inputs -->
+            <section class="panel input-panel admin-only" style="display: none;">
+                <div class="panel-header">
+                    <h2>📋 근로 학생 데이터 입력</h2>
+                    <span class="badge">자연어 파싱 지원</span>
+                </div>
+                <div class="panel-body">
+                    <p class="input-info">손글씨 필기 내용을 아래 영역에 복사하여 붙여넣으세요. 이름, 근무 요일, 시간대, 식사 여부를 자동으로 감지합니다.</p>
+                    <textarea id="text-input" placeholder="(집중) 홍길동 월화수토일 9-14
+(집중) 김철수 월수 9-12, 화일 9-14, 토 9-18 (식사)
+(학기중) 강동원 월수 14-22, 화목 14-18, 토 9-12
+(학기중) 유재석 월수 12-17, 화목 13-22 (식사)"></textarea>
+                    
+                    <div class="input-actions">
+                        <button id="btn-parse" class="btn btn-accent btn-full">✨ 데이터 반영하기</button>
+                    </div>
+
+                    <div class="divider">또는 직접 추가</div>
+
+                    <!-- Direct Form Input -->
+                    <form id="student-form" class="student-form">
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label for="form-name">이름</label>
+                                <input type="text" id="form-name" placeholder="홍길동" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="form-type">구분</label>
+                                <select id="form-type">
+                                    <option value="학기중">학기중근로</option>
+                                    <option value="집중">집중근로</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>학생 표기 색상</label>
+                            <div class="form-color-picker" id="form-color-picker">
+                                <!-- Will be rendered dynamically via JS -->
+                            </div>
+                            <input type="hidden" id="form-color-index" value="-1">
+                        </div>
+                        <div class="form-group">
+                            <label>근무 일정 추가</label>
+                            <div class="schedule-input-row">
+                                <div class="days-checkboxes">
+                                    <label class="day-check"><input type="checkbox" value="월"><span>월</span></label>
+                                    <label class="day-check"><input type="checkbox" value="화"><span>화</span></label>
+                                    <label class="day-check"><input type="checkbox" value="수"><span>수</span></label>
+                                    <label class="day-check"><input type="checkbox" value="목"><span>목</span></label>
+                                    <label class="day-check"><input type="checkbox" value="금"><span>금</span></label>
+                                    <label class="day-check"><input type="checkbox" value="토"><span>토</span></label>
+                                    <label class="day-check"><input type="checkbox" value="일"><span>일</span></label>
+                                </div>
+                                <div class="time-range-pick">
+                                    <input type="number" id="form-start-time" min="9" max="22" value="9" placeholder="시작">
+                                    <span>~</span>
+                                    <input type="number" id="form-end-time" min="9" max="22" value="18" placeholder="종료">
+                                    <span>시</span>
+                                </div>
+                                <div class="meal-toggle">
+                                    <label class="toggle-container">
+                                        <input type="checkbox" id="form-meal">
+                                        <span class="checkmark"></span>
+                                        식사감면 (1h 차감)
+                                    </label>
+                                </div>
+                                <button type="button" id="btn-add-student" class="btn btn-secondary btn-sm">추가</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Right Side: Statistics & Status -->
+            <section class="panel summary-panel">
+                <div class="panel-header">
+                    <h2>📊 주간 근무시간 집계</h2>
+                </div>
+                <div class="panel-body summary-body">
+                    <div class="summary-columns">
+                        <!-- Intensive Work-Study -->
+                        <div class="summary-col">
+                            <h3>집중근로 주 근무시간</h3>
+                            <div id="intensive-hours-list" class="hours-list">
+                                <div class="no-data">등록된 집중근로 학생이 없습니다.</div>
+                            </div>
+                        </div>
+                        <!-- Semester Work-Study -->
+                        <div class="summary-col">
+                            <h3>학기중근로 주 근무시간</h3>
+                            <div id="semester-hours-list" class="hours-list">
+                                <div class="no-data">등록된 학기중근로 학생이 없습니다.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Student Database / List Section -->
+        <section class="panel list-panel">
+            <div class="panel-header">
+                <h2>👥 등록된 근로 장학생 목록 (<span id="student-count">0</span>명)</h2>
+                <div class="panel-actions" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button id="btn-import-local" class="btn btn-secondary btn-sm admin-only" style="display: none;" title="서버 실행 전에 브라우저에 저장되어 있던 데이터를 가져와 폴더 파일(data.json)로 저장합니다.">💻 브라우저 데이터 가져오기</button>
+                    <button id="btn-import-excel-file" class="btn btn-secondary btn-sm admin-only" style="display: none;" onclick="triggerExcelImport()" title="이전에 다운로드했던 시간표 엑셀 파일을 올려 데이터를 원래대로 복구합니다.">📤 엑셀 파일로 복구</button>
+                    <input type="file" id="excel-file-input" style="display: none;" accept=".xlsx" onchange="handleExcelImport(event)">
+                    <button id="btn-change-password" class="btn btn-secondary btn-sm admin-only" style="display: none;" title="관리자 마스터 비밀번호를 변경합니다.">⚙️ 비밀번호 변경</button>
+                    <button id="btn-clear-all" class="btn btn-danger btn-sm admin-only" style="display: none;">전체 삭제</button>
+                </div>
+            </div>
+            <div class="panel-body">
+                <div class="table-responsive">
+                    <table class="student-table">
+                        <thead>
+                            <tr>
+                                <th>구분</th>
+                                <th>이름</th>
+                                <th>근무 시간 상세</th>
+                                <th>총 근무시간 (식사 차감)</th>
+                                <th class="admin-only" style="display: none;">관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="student-table-body">
+                            <tr>
+                                <td colspan="5" class="empty-table-msg">데이터를 입력하여 시간표를 구성해보세요!</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Timetable Section -->
+        <section class="panel timetable-panel">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <h2>📅 요일별 근로 시간표 (26년 여름방학)</h2>
+                <button id="btn-apply-weekly-to-month-weekly-tab" class="btn btn-accent btn-sm admin-only" style="display: none;" title="주간 고정 시간표를 기준으로 이번 달 전체 날짜에 근무 일정을 일괄 적용합니다.">⚡ 주간 고정일정 일괄 적용</button>
+            </div>
+            <div class="panel-body">
+                <div class="timetable-container">
+                    <!-- 요일별 카드들이 자바스크립트로 동적 렌더링됩니다. -->
+                    <div class="timetable-days-grid" id="timetable-grid">
+                        <!-- Monday -->
+                        <div class="day-card" data-day="월">
+                            <div class="day-card-header">월요일</div>
+                            <div class="day-card-body">
+                                <div class="time-axis">
+                                    <!-- 09:00 ~ 22:00 -->
+                                    <div class="time-slot-label">09:00</div>
+                                    <div class="time-slot-label">10:00</div>
+                                    <div class="time-slot-label">11:00</div>
+                                    <div class="time-slot-label">12:00</div>
+                                    <div class="time-slot-label">13:00</div>
+                                    <div class="time-slot-label">14:00</div>
+                                    <div class="time-slot-label">15:00</div>
+                                    <div class="time-slot-label">16:00</div>
+                                    <div class="time-slot-label">17:00</div>
+                                    <div class="time-slot-label">18:00</div>
+                                    <div class="time-slot-label">19:00</div>
+                                    <div class="time-slot-label">20:00</div>
+                                    <div class="time-slot-label">21:00</div>
+                                    <div class="time-slot-label">22:00</div>
+                                </div>
+                                <div class="grid-content-area" id="grid-content-월">
+                                    <!-- 그리드 격자선 배경 -->
+                                    <div class="grid-bg">
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                    </div>
+                                    <!-- 스케줄 블록 배치 영역 -->
+                                    <div class="blocks-container" id="blocks-월"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tuesday -->
+                        <div class="day-card" data-day="화">
+                            <div class="day-card-header">화요일</div>
+                            <div class="day-card-body">
+                                <div class="time-axis">
+                                    <div class="time-slot-label">09:00</div>
+                                    <div class="time-slot-label">10:00</div>
+                                    <div class="time-slot-label">11:00</div>
+                                    <div class="time-slot-label">12:00</div>
+                                    <div class="time-slot-label">13:00</div>
+                                    <div class="time-slot-label">14:00</div>
+                                    <div class="time-slot-label">15:00</div>
+                                    <div class="time-slot-label">16:00</div>
+                                    <div class="time-slot-label">17:00</div>
+                                    <div class="time-slot-label">18:00</div>
+                                    <div class="time-slot-label">19:00</div>
+                                    <div class="time-slot-label">20:00</div>
+                                    <div class="time-slot-label">21:00</div>
+                                    <div class="time-slot-label">22:00</div>
+                                </div>
+                                <div class="grid-content-area" id="grid-content-화">
+                                    <div class="grid-bg">
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                    </div>
+                                    <div class="blocks-container" id="blocks-화"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Wednesday -->
+                        <div class="day-card" data-day="수">
+                            <div class="day-card-header">수요일</div>
+                            <div class="day-card-body">
+                                <div class="time-axis">
+                                    <div class="time-slot-label">09:00</div>
+                                    <div class="time-slot-label">10:00</div>
+                                    <div class="time-slot-label">11:00</div>
+                                    <div class="time-slot-label">12:00</div>
+                                    <div class="time-slot-label">13:00</div>
+                                    <div class="time-slot-label">14:00</div>
+                                    <div class="time-slot-label">15:00</div>
+                                    <div class="time-slot-label">16:00</div>
+                                    <div class="time-slot-label">17:00</div>
+                                    <div class="time-slot-label">18:00</div>
+                                    <div class="time-slot-label">19:00</div>
+                                    <div class="time-slot-label">20:00</div>
+                                    <div class="time-slot-label">21:00</div>
+                                    <div class="time-slot-label">22:00</div>
+                                </div>
+                                <div class="grid-content-area" id="grid-content-수">
+                                    <div class="grid-bg">
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                    </div>
+                                    <div class="blocks-container" id="blocks-수"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Thursday -->
+                        <div class="day-card" data-day="목">
+                            <div class="day-card-header">목요일</div>
+                            <div class="day-card-body">
+                                <div class="time-axis">
+                                    <div class="time-slot-label">09:00</div>
+                                    <div class="time-slot-label">10:00</div>
+                                    <div class="time-slot-label">11:00</div>
+                                    <div class="time-slot-label">12:00</div>
+                                    <div class="time-slot-label">13:00</div>
+                                    <div class="time-slot-label">14:00</div>
+                                    <div class="time-slot-label">15:00</div>
+                                    <div class="time-slot-label">16:00</div>
+                                    <div class="time-slot-label">17:00</div>
+                                    <div class="time-slot-label">18:00</div>
+                                    <div class="time-slot-label">19:00</div>
+                                    <div class="time-slot-label">20:00</div>
+                                    <div class="time-slot-label">21:00</div>
+                                    <div class="time-slot-label">22:00</div>
+                                </div>
+                                <div class="grid-content-area" id="grid-content-목">
+                                    <div class="grid-bg">
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                    </div>
+                                    <div class="blocks-container" id="blocks-목"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Friday -->
+                        <div class="day-card" data-day="금">
+                            <div class="day-card-header">금요일</div>
+                            <div class="day-card-body">
+                                <div class="time-axis">
+                                    <div class="time-slot-label">09:00</div>
+                                    <div class="time-slot-label">10:00</div>
+                                    <div class="time-slot-label">11:00</div>
+                                    <div class="time-slot-label">12:00</div>
+                                    <div class="time-slot-label">13:00</div>
+                                    <div class="time-slot-label">14:00</div>
+                                    <div class="time-slot-label">15:00</div>
+                                    <div class="time-slot-label">16:00</div>
+                                    <div class="time-slot-label">17:00</div>
+                                    <div class="time-slot-label">18:00</div>
+                                    <div class="time-slot-label">19:00</div>
+                                    <div class="time-slot-label">20:00</div>
+                                    <div class="time-slot-label">21:00</div>
+                                    <div class="time-slot-label">22:00</div>
+                                </div>
+                                <div class="grid-content-area" id="grid-content-금">
+                                    <div class="grid-bg">
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div>
+                                    </div>
+                                    <div class="blocks-container" id="blocks-금"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Saturday -->
+                        <div class="day-card weekend-card" data-day="토">
+                            <div class="day-card-header">토요일</div>
+                            <div class="day-card-body">
+                                <div class="time-axis">
+                                    <div class="time-slot-label">09:00</div>
+                                    <div class="time-slot-label">10:00</div>
+                                    <div class="time-slot-label">11:00</div>
+                                    <div class="time-slot-label">12:00</div>
+                                    <div class="time-slot-label">13:00</div>
+                                    <div class="time-slot-label">14:00</div>
+                                    <div class="time-slot-label">15:00</div>
+                                    <div class="time-slot-label">16:00</div>
+                                    <div class="time-slot-label">17:00</div>
+                                    <div class="time-slot-label">18:00</div>
+                                </div>
+                                <div class="grid-content-area weekend-grid" id="grid-content-토">
+                                    <div class="grid-bg">
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                    </div>
+                                    <div class="blocks-container" id="blocks-토"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sunday -->
+                        <div class="day-card weekend-card" data-day="일">
+                            <div class="day-card-header">일요일</div>
+                            <div class="day-card-body">
+                                <div class="time-axis">
+                                    <div class="time-slot-label">09:00</div>
+                                    <div class="time-slot-label">10:00</div>
+                                    <div class="time-slot-label">11:00</div>
+                                    <div class="time-slot-label">12:00</div>
+                                    <div class="time-slot-label">13:00</div>
+                                    <div class="time-slot-label">14:00</div>
+                                    <div class="time-slot-label">15:00</div>
+                                    <div class="time-slot-label">16:00</div>
+                                    <div class="time-slot-label">17:00</div>
+                                    <div class="time-slot-label">18:00</div>
+                                </div>
+                                <div class="grid-content-area weekend-grid" id="grid-content-일">
+                                    <div class="grid-bg">
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                        <div class="grid-bg-row"></div><div class="grid-bg-row"></div><div class="grid-bg-row"></div>
+                                    </div>
+                                    <div class="blocks-container" id="blocks-일"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Monthly Calendar Section -->
+        <section class="panel calendar-panel" id="calendar-panel" style="display: none;">
+            <div class="panel-header">
+                <h2>🗓️ 월간 달력 시간표 (<span id="calendar-title-label">2026년 7월</span>)</h2>
+                <div class="calendar-header-actions" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                    <div class="calendar-legend" style="display: flex; gap: 1rem; font-size: 0.8rem;">
+                        <span class="legend-item"><span class="legend-dot intensive"></span>집중근로</span>
+                        <span class="legend-item"><span class="legend-dot semester"></span>학기중근로</span>
+                    </div>
+                    <button id="btn-apply-weekly-to-month" class="btn btn-accent btn-sm admin-only" style="display: none;" title="주간 고정 시간표를 기준으로 이번 달 전체 날짜에 근무 일정을 일괄 생성합니다.">⚡ 주간 고정일정 일괄 적용</button>
+                    <button id="btn-clear-month" class="btn btn-danger btn-sm admin-only" style="display: none;" title="이번 달의 모든 근무 일정을 비웁니다.">🧹 월 일정 비우기</button>
+                </div>
+            </div>
+            <div class="panel-body">
+                <p class="calendar-info">날짜 칸을 클릭하면 해당 일자의 상세 일정을 추가/삭제/변경할 수 있습니다.</p>
+                <div class="calendar-grid-wrapper">
+                    <div class="calendar-weekdays">
+                        <div class="weekday Sunday">일</div>
+                        <div class="weekday">월</div>
+                        <div class="weekday">화</div>
+                        <div class="weekday">수</div>
+                        <div class="weekday">목</div>
+                        <div class="weekday">금</div>
+                        <div class="weekday Saturday">토</div>
+                    </div>
+                    <div class="calendar-days" id="calendar-days-container">
+                        <!-- Dates dynamically rendered via JS -->
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <p>&copy; 2026 WorkStudy Scheduler. All rights reserved.</p>
+    </footer>
+
+    <!-- Edit Date Schedule Modal -->
+    <div class="modal-backdrop" id="date-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-date-title">2026년 07월 10일 (금요일) 일정</h3>
+                <button class="modal-close-btn" id="btn-close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-section">
+                    <h4>👥 당일 근무 학생 목록</h4>
+                    <div class="modal-student-list" id="modal-today-students">
+                        <!-- Student shifts for this date -->
+                    </div>
+                </div>
+                
+                <div class="modal-section add-shift-section admin-only" style="display: none;">
+                    <h4 id="modal-form-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>➕ 근무 추가</span>
+                        <a href="#" id="btn-modal-cancel-edit" style="display: none; font-size: 0.75rem; color: var(--danger); text-decoration: none; font-weight: normal;">수정 취소</a>
+                    </h4>
+                    <div class="add-shift-form">
+                        <div class="form-row-3">
+                            <div class="form-group">
+                                <label for="modal-add-student">학생 선택</label>
+                                <select id="modal-add-student">
+                                    <!-- Option list of all students -->
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>근무 시간</label>
+                                <div class="time-range-pick">
+                                    <input type="number" id="modal-add-start" min="9" max="22" value="9">
+                                    <span>~</span>
+                                    <input type="number" id="modal-add-end" min="9" max="22" value="18">
+                                    <span>시</span>
+                                </div>
+                            </div>
+                            <div class="form-group meal-checkbox-group">
+                                <label class="toggle-container">
+                                    <input type="checkbox" id="modal-add-meal">
+                                    <span class="checkmark"></span>
+                                    식사감면 (1h)
+                                </label>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-accent btn-sm btn-full" id="btn-modal-add-shift">오늘 일정에 추가</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary admin-only" id="btn-modal-revert" style="display: none;">기본 일정으로 복원</button>
+                <div class="footer-right">
+                    <button class="btn btn-secondary admin-only" id="btn-modal-cancel" style="display: none;">취소</button>
+                    <button class="btn btn-secondary guest-only-btn" id="btn-modal-close" onclick="closeModal()">닫기</button>
+                    <button class="btn btn-primary admin-only" id="btn-modal-save" style="display: none;">변경사항 저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Student Modal -->
+    <div class="modal-backdrop" id="student-modal">
+        <div class="modal-content" style="width: 550px;">
+            <div class="modal-header">
+                <h3>👥 장학생 정보 및 고정일정 수정</h3>
+                <button class="modal-close-btn" id="btn-close-student-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="edit-student-name">학생 이름</label>
+                    <input type="text" id="edit-student-name" class="form-control">
+                </div>
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label for="edit-student-type">근로 구분</label>
+                        <select id="edit-student-type" class="form-control">
+                            <option value="학기중">학기중근로</option>
+                            <option value="집중">집중근로</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="padding-top: 1.8rem;">
+                        <label class="toggle-container">
+                            <input type="checkbox" id="edit-student-variable">
+                            <span class="checkmark"></span>
+                            변동성 (고정시간 없음)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="modal-section" id="edit-schedules-section-wrapper">
+                    <div class="section-header-flex">
+                        <h4>📅 주간 고정 일정 목록</h4>
+                        <button type="button" class="btn btn-accent btn-sm" id="btn-add-edit-schedule-block">일정 추가</button>
+                    </div>
+                    <div class="edit-schedules-list" id="edit-student-schedules-list">
+                        <!-- Schedule blocks dynamically loaded -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-student-modal">취소</button>
+                <button class="btn btn-primary" id="btn-save-student-modal">저장하기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Login Modal -->
+    <div class="modal-backdrop" id="login-modal">
+        <div class="modal-content" style="width: 400px;">
+            <div class="modal-header">
+                <h3>🔑 관리자 로그인</h3>
+                <button class="modal-close-btn" id="btn-close-login-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1.25rem; line-height: 1.4;">
+                    시간표를 편집하거나 데이터베이스에 변경사항을 저장하려면 관리자 마스터 비밀번호를 입력해야 합니다.
+                </p>
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="login-username">아이디</label>
+                    <input type="text" id="login-username" class="form-control" placeholder="아이디 입력" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="login-password">비밀번호</label>
+                    <input type="password" id="login-password" class="form-control" placeholder="비밀번호 입력" autocomplete="current-password">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-login-cancel">취소</button>
+                <button class="btn btn-primary" id="btn-login-submit">로그인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div class="modal-backdrop" id="password-modal">
+        <div class="modal-content" style="width: 400px;">
+            <div class="modal-header">
+                <h3>⚙️ 마스터 비밀번호 변경</h3>
+                <button class="modal-close-btn" id="btn-close-password-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group" style="margin-bottom: 1.25rem;">
+                    <label for="new-password">새 비밀번호</label>
+                    <input type="password" id="new-password" class="form-control" placeholder="새 비밀번호 입력">
+                </div>
+                <div class="form-group">
+                    <label for="new-password-confirm">새 비밀번호 확인</label>
+                    <input type="password" id="new-password-confirm" class="form-control" placeholder="새 비밀번호 다시 입력">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-password-cancel">취소</button>
+                <button class="btn btn-primary" id="btn-password-submit">변경 완료</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Workers Modal -->
+    <div class="modal-backdrop" id="current-workers-modal">
+        <div class="modal-content" style="width: 450px;">
+            <div class="modal-header">
+                <h3>🟢 실시간 근무자 현황</h3>
+                <button class="modal-close-btn" id="btn-close-current-workers-modal">&times;</button>
+            </div>
+            <div class="modal-body" style="padding-top: 1rem;">
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center;">
+                    <span>기준 시각: <strong id="current-workers-time">-</strong></span>
+                    <button class="btn btn-secondary btn-xs" id="btn-refresh-current-workers" style="padding: 0.2rem 0.4rem; font-size: 0.75rem;">🔄 새로고침</button>
+                </p>
+                
+                <div id="current-workers-list" class="current-workers-list" style="max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <!-- Rendered dynamically -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-close-current-workers-modal-footer">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- app.js -->
+    <script src="app.js"></script>
+</body>
+</html>
