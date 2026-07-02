@@ -1,7 +1,7 @@
 // Supabase Configuration
 // 복사해오신 Supabase URL과 Public Anon Key를 여기에 입력해 주세요.
-const SUPABASE_URL = "https://hcplbxcopsuvptlamasi.supabase.co"; 
-const SUPABASE_ANON_KEY = "sb_publishable_ZU61y-0Zzd5OO0a0-ccPXQ_GkZ-p8sL"; 
+const SUPABASE_URL = "https://syecvaccoztxbnjwpkfy.supabase.co"; 
+const SUPABASE_ANON_KEY = "sb_publishable_FUk1z0sLlATIus7KHXnYgA_3G4ku9N9"; 
 
 let supabaseClient = null;
 if (SUPABASE_URL && SUPABASE_ANON_KEY) {
