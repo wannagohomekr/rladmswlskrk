@@ -2451,7 +2451,8 @@ function parseInputTextSilent() {
             name: name,
             type: type,
             schedules: schedules,
-            isVariable: isVariable
+            isVariable: isVariable,
+            monthlyLimit: 120
         });
     });
 
@@ -2516,13 +2517,9 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     
     const btnApplyWeeklyToMonth = document.getElementById('btn-apply-weekly-to-month');
-    const btnApplyWeeklyToMonthWeeklyTab = document.getElementById('btn-apply-weekly-to-month-weekly-tab');
     const btnClearMonth = document.getElementById('btn-clear-month');
     if (btnApplyWeeklyToMonth) {
         btnApplyWeeklyToMonth.addEventListener('click', applyWeeklySchedulesToMonth);
-    }
-    if (btnApplyWeeklyToMonthWeeklyTab) {
-        btnApplyWeeklyToMonthWeeklyTab.addEventListener('click', applyWeeklySchedulesToMonth);
     }
     if (btnClearMonth) {
         btnClearMonth.addEventListener('click', clearMonthlySchedules);
@@ -2547,6 +2544,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if (btnExportImage) {
         btnExportImage.addEventListener('click', exportToImage);
     }
+    
+    // Inject dynamic monthly limit inputs and options settings
+    initMonthlyLimitInputs();
 });
 
 // Tab & View change binding
@@ -2684,7 +2684,8 @@ function parseInputText() {
             name: name,
             type: type,
             schedules: schedules,
-            isVariable: isVariable
+            isVariable: isVariable,
+            monthlyLimit: 120
         });
     });
 
@@ -2726,6 +2727,10 @@ function addSingleStudent() {
         return;
     }
 
+    const settings = getSystemSettings();
+    const limitInput = document.getElementById('form-monthly-limit');
+    const monthlyLimit = limitInput ? parseInt(limitInput.value, 10) : settings.maxMonthlyLimit;
+
     // Check if student already exists
     let student = students.find(s => s.name === name);
     if (!student) {
@@ -2735,13 +2740,15 @@ function addSingleStudent() {
             type: type,
             schedules: [],
             isVariable: false,
-            colorIndex: colorIndex
+            colorIndex: colorIndex,
+            monthlyLimit: monthlyLimit
         };
         students.push(student);
     } else {
         // Update type and color if found
         student.type = type;
         student.colorIndex = colorIndex;
+        student.monthlyLimit = monthlyLimit;
     }
 
     // Add schedule block
@@ -2812,12 +2819,28 @@ function getSchedulesForDate(dateStr) {
 
 // Update the Entire User Interface
 function updateUI() {
+    const settings = getSystemSettings();
+    
+    // Ensure all students have a monthlyLimit initialized
+    students.forEach(student => {
+        if (student.monthlyLimit === undefined) {
+            student.monthlyLimit = settings.maxMonthlyLimit;
+        }
+    });
+
     renderStudentList();
     renderHoursSummary();
+    
+    // Sync the input values of options settings form
+    syncSettingsInputs();
+
     if (currentView === 'weekly') {
         renderTimetables();
+        const container = document.getElementById('monthly-weekly-breakdown-container');
+        if (container) container.style.display = 'none';
     } else {
         renderCalendar();
+        renderMonthlyWeeklyBreakdown();
     }
 }
 
@@ -2903,6 +2926,7 @@ function renderHoursSummary() {
     intensiveHoursList.innerHTML = '';
     semesterHoursList.innerHTML = '';
 
+    const settings = getSystemSettings();
     const intensiveStudents = students.filter(s => s.type === '집중');
     const semesterStudents = students.filter(s => s.type === '학기중');
 
@@ -2916,11 +2940,18 @@ function renderHoursSummary() {
         });
         intensiveStudents.forEach(s => {
             const hours = currentView === 'weekly' ? calculateWeeklyHours(s) : calculateMonthlyHours(s, selectedYear, selectedMonth);
+            const maxHrs = currentView === 'weekly' ? settings.maxWeeklyIntensive : (s.monthlyLimit !== undefined ? s.monthlyLimit : settings.maxMonthlyLimit);
+            const isExceeded = !s.isVariable && hours > maxHrs;
+            
+            const exceededStyle = isExceeded ? 'color: var(--danger); font-weight: bold; display: inline-flex; align-items: center; gap: 0.25rem;' : '';
+            const valDisplay = s.isVariable && currentView === 'weekly' ? '변동성' : 
+                               (isExceeded ? `<span title="최대 제한 시간(${maxHrs}h) 초과!" style="${exceededStyle}">${hours}h ⚠️</span>` : `${hours}h`);
+
             const item = document.createElement('div');
             item.className = 'hour-item intensive';
             item.innerHTML = `
                 <span class="student-name">${s.name}</span>
-                <span class="student-val">${s.isVariable && currentView === 'weekly' ? '변동성' : `${hours}h`}</span>
+                <span class="student-val">${valDisplay}</span>
             `;
             intensiveHoursList.appendChild(item);
         });
@@ -2936,11 +2967,18 @@ function renderHoursSummary() {
         });
         semesterStudents.forEach(s => {
             const hours = currentView === 'weekly' ? calculateWeeklyHours(s) : calculateMonthlyHours(s, selectedYear, selectedMonth);
+            const maxHrs = currentView === 'weekly' ? settings.maxWeeklySemester : (s.monthlyLimit !== undefined ? s.monthlyLimit : settings.maxMonthlyLimit);
+            const isExceeded = !s.isVariable && hours > maxHrs;
+            
+            const exceededStyle = isExceeded ? 'color: var(--danger); font-weight: bold; display: inline-flex; align-items: center; gap: 0.25rem;' : '';
+            const valDisplay = s.isVariable && currentView === 'weekly' ? '변동성' : 
+                               (isExceeded ? `<span title="최대 제한 시간(${maxHrs}h) 초과!" style="${exceededStyle}">${hours}h ⚠️</span>` : `${hours}h`);
+
             const item = document.createElement('div');
             item.className = 'hour-item semester';
             item.innerHTML = `
                 <span class="student-name">${s.name}</span>
-                <span class="student-val">${s.isVariable && currentView === 'weekly' ? '변동성' : `${hours}h`}</span>
+                <span class="student-val">${valDisplay}</span>
             `;
             semesterHoursList.appendChild(item);
         });
@@ -3637,21 +3675,35 @@ async function exportToExcel() {
             const ws1 = workbook.addWorksheet(`${selectedMonth}월 시간표`);
             ws1.views = [{ showGridLines: true }];
 
-            ws1.columns = [
-                { key: 'sun', width: 18 }, // A: Sunday
-                { key: 'mon', width: 18 }, // B: Monday
-                { key: 'tue', width: 18 }, // C: Tuesday
-                { key: 'wed', width: 18 }, // D: Wednesday
-                { key: 'thu', width: 18 }, // E: Thursday
-                { key: 'fri', width: 18 }, // F: Friday
-                { key: 'sat', width: 18 }, // G: Saturday
-                { key: 'space1', width: 3 }, // H: Spacer
-                { key: 'intName', width: 12 }, // I: Intensive Name
-                { key: 'intHrs', width: 10 },  // J: Intensive Hours
-                { key: 'space2', width: 3 },  // K: Spacer
-                { key: 'natName', width: 12 }, // L: National Name
-                { key: 'natHrs', width: 10 }   // M: National Hours
+            // Local helper for column letters
+            const getColLetter = (colIdx) => String.fromCharCode(64 + colIdx);
+            const settings = getSystemSettings();
+            const weeks = getWeeksOfMonth(selectedYear, selectedMonth);
+            
+            // Define sheet columns dynamically based on number of weeks
+            const columns = [
+                { key: 'sun', width: 18 }, // A
+                { key: 'mon', width: 18 }, // B
+                { key: 'tue', width: 18 }, // C
+                { key: 'wed', width: 18 }, // D
+                { key: 'thu', width: 18 }, // E
+                { key: 'fri', width: 18 }, // F
+                { key: 'sat', width: 18 }, // G
+                { key: 'space1', width: 3 } // H
             ];
+            
+            columns.push({ key: 'type', width: 12 }); // I: 근로구분
+            columns.push({ key: 'name', width: 12 }); // J: 이름
+            columns.push({ key: 'limit', width: 10 }); // K: 시간/월
+            
+            weeks.forEach((w) => {
+                columns.push({ key: `week_${w.weekIndex}`, width: 8 }); // L, M, N...
+            });
+            
+            columns.push({ key: 'total', width: 10 }); // total
+            columns.push({ key: 'diff', width: 12 });  // diff
+            
+            ws1.columns = columns;
 
             // 1. Title
             ws1.mergeCells('A1:G1');
@@ -3780,29 +3832,36 @@ async function exportToExcel() {
                 }
             });
 
-            // 4. Monthly Summary Tables: Columns I-J and L-M starting at Row 3
-            ws1.mergeCells('I3:J3');
-            const intHead = ws1.getCell('I3');
-            intHead.value = '집중근로 월간 근무시간';
-            intHead.font = { name: '맑은 고딕', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-            intHead.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } }; // Purple
-            intHead.alignment = { horizontal: 'center', vertical: 'middle' };
+            // 4. Monthly Weekly Breakdown Table in columns I to S starting at Row 3
+            const tableStartCol = 9; // I
+            const tableEndCol = 11 + weeks.length + 2; // type + name + limit + weeks + total + diff
+            const tableStartLetter = getColLetter(tableStartCol);
+            const tableEndLetter = getColLetter(tableEndCol);
             
-            ws1.mergeCells('L3:M3');
-            const natHead = ws1.getCell('L3');
-            natHead.value = '학기중근로 월간 근무시간';
-            natHead.font = { name: '맑은 고딕', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-            natHead.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0284C7' } }; // Sky
-            natHead.alignment = { horizontal: 'center', vertical: 'middle' };
+            ws1.mergeCells(`${tableStartLetter}3:${tableEndLetter}3`);
+            const summaryHead = ws1.getCell(`${tableStartLetter}3`);
+            summaryHead.value = `주당 근로시간 상세 현황 (${selectedMonth}월)`;
+            summaryHead.font = { name: '맑은 고딕', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+            summaryHead.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } }; // Dark slate
+            summaryHead.alignment = { horizontal: 'center', vertical: 'middle' };
 
-            ws1.getCell('I4').value = '이름';
-            ws1.getCell('J4').value = '근무시간';
-            ws1.getCell('L4').value = '이름';
-            ws1.getCell('M4').value = '근무시간';
+            ws1.getCell('I4').value = '구분';
+            ws1.getCell('J4').value = '이름';
+            ws1.getCell('K4').value = '시간/월';
+            weeks.forEach((w, wIdx) => {
+                const colLetter = getColLetter(12 + wIdx);
+                ws1.getCell(`${colLetter}4`).value = `${w.weekIndex}주`;
+            });
             
-            const subHeaders = ['I4', 'J4', 'L4', 'M4'];
-            subHeaders.forEach(cellRef => {
-                const cell = ws1.getCell(cellRef);
+            const totalColLetter = getColLetter(12 + weeks.length);
+            const diffColLetter = getColLetter(13 + weeks.length);
+            
+            ws1.getCell(`${totalColLetter}4`).value = '합계';
+            ws1.getCell(`${diffColLetter}4`).value = '초과시간';
+            
+            // Format row 4 headers
+            for (let c = tableStartCol; c <= tableEndCol; c++) {
+                const cell = ws1.getCell(`${getColLetter(c)}4`);
                 cell.font = { name: '맑은 고딕', size: 9, bold: true, color: { argb: 'FF475569' } };
                 cell.alignment = { horizontal: 'center', vertical: 'middle' };
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
@@ -3812,38 +3871,83 @@ async function exportToExcel() {
                     left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
                     right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
                 };
+            }
+
+            const sortedStudents = [...students].sort((a, b) => {
+                if (a.type !== b.type) {
+                    return a.type === '집중' ? -1 : 1;
+                }
+                return a.name.localeCompare(b.name);
             });
 
-            const intStudents = students.filter(s => s.type === '집중')
-                .sort((a,b) => calculateMonthlyHours(b, selectedYear, selectedMonth) - calculateMonthlyHours(a, selectedYear, selectedMonth) || a.name.localeCompare(b.name));
-            const natStudents = students.filter(s => s.type === '학기중')
-                .sort((a,b) => calculateMonthlyHours(b, selectedYear, selectedMonth) - calculateMonthlyHours(a, selectedYear, selectedMonth) || a.name.localeCompare(b.name));
-
-            const maxSummaryRows = Math.max(intStudents.length, natStudents.length);
-            let intTotal = 0;
-            let natTotal = 0;
-
-            for (let i = 0; i < maxSummaryRows; i++) {
-                const sumRowIdx = 5 + i;
+            sortedStudents.forEach((student, sIdx) => {
+                const sumRowIdx = 5 + sIdx;
+                const limit = student.monthlyLimit !== undefined ? student.monthlyLimit : settings.maxMonthlyLimit;
                 
-                if (i < intStudents.length) {
-                    const s = intStudents[i];
-                    const hours = calculateMonthlyHours(s, selectedYear, selectedMonth);
-                    intTotal += hours;
-                    ws1.getCell(`I${sumRowIdx}`).value = s.name;
-                    ws1.getCell(`J${sumRowIdx}`).value = hours;
+                ws1.getCell(`I${sumRowIdx}`).value = `${student.type}근로`;
+                ws1.getCell(`J${sumRowIdx}`).value = student.name;
+                ws1.getCell(`K${sumRowIdx}`).value = limit;
+                
+                let studentTotal = 0;
+                weeks.forEach((w, wIdx) => {
+                    const hrs = calculateStudentHoursForRange(student, selectedYear, selectedMonth, w.startDay, w.endDay);
+                    studentTotal += hrs;
+                    const colLetter = getColLetter(12 + wIdx);
+                    const cell = ws1.getCell(`${colLetter}${sumRowIdx}`);
+                    cell.value = hrs;
+                    
+                    const maxWeekly = student.type === '집중' ? settings.maxWeeklyIntensive : settings.maxWeeklySemester;
+                    if (hrs > maxWeekly) {
+                        cell.fill = {
+                            type: 'pattern',
+                            pattern: 'solid',
+                            fgColor: { argb: 'FFFEE2E2' } // light red
+                        };
+                        cell.font = {
+                            name: '맑은 고딕',
+                            size: 9,
+                            bold: true,
+                            color: { argb: 'FFB91C1C' } // dark red
+                        };
+                    }
+                });
+                
+                ws1.getCell(`${totalColLetter}${sumRowIdx}`).value = studentTotal;
+                
+                const diff = studentTotal - limit;
+                const diffCell = ws1.getCell(`${diffColLetter}${sumRowIdx}`);
+                diffCell.value = diff > 0 ? `+${diff}` : diff;
+                
+                // Color the diff cell based on value
+                let diffBgColor = 'FFFFFFFF';
+                let diffTextColor = 'FF000000';
+                
+                if (diff === 0) {
+                    diffBgColor = 'FFDCFCE7'; // light green
+                    diffTextColor = 'FF15803D'; // dark green
+                } else if (diff < 0) {
+                    diffBgColor = 'FFFFF3C7'; // light amber
+                    diffTextColor = 'FFB45309'; // dark amber
+                } else {
+                    diffBgColor = 'FFFEE2E2'; // light red
+                    diffTextColor = 'FFB91C1C'; // dark red
                 }
                 
-                if (i < natStudents.length) {
-                    const s = natStudents[i];
-                    const hours = calculateMonthlyHours(s, selectedYear, selectedMonth);
-                    natTotal += hours;
-                    ws1.getCell(`L${sumRowIdx}`).value = s.name;
-                    ws1.getCell(`M${sumRowIdx}`).value = hours;
-                }
-
-                ['I', 'J', 'L', 'M'].forEach(col => {
-                    const cell = ws1.getCell(`${col}${sumRowIdx}`);
+                diffCell.fill = {
+                    type: 'pattern',
+                    pattern: 'solid',
+                    fgColor: { argb: diffBgColor }
+                };
+                diffCell.font = {
+                    name: '맑은 고딕',
+                    size: 9,
+                    bold: true,
+                    color: { argb: diffTextColor }
+                };
+                
+                // Format other cells in the row
+                for (let c = tableStartCol; c < tableEndCol; c++) {
+                    const cell = ws1.getCell(`${getColLetter(c)}${sumRowIdx}`);
                     cell.font = { name: '맑은 고딕', size: 9 };
                     cell.alignment = { horizontal: 'center', vertical: 'middle' };
                     cell.border = {
@@ -3852,17 +3956,56 @@ async function exportToExcel() {
                         left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
                         right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
                     };
+                }
+                
+                diffCell.alignment = { horizontal: 'center', vertical: 'middle' };
+                diffCell.border = {
+                    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                    right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+                };
+            });
+
+            // Add a total summary row for the entire group
+            const totalRowIdx = 5 + sortedStudents.length;
+            ws1.getCell(`I${totalRowIdx}`).value = '전체 합계';
+            ws1.mergeCells(`I${totalRowIdx}:K${totalRowIdx}`);
+            
+            // Calculate column-wise totals for weeks
+            weeks.forEach((w, wIdx) => {
+                let weekTotal = 0;
+                sortedStudents.forEach(student => {
+                    weekTotal += calculateStudentHoursForRange(student, selectedYear, selectedMonth, w.startDay, w.endDay);
                 });
-            }
-
-            const totalRowIdx = 5 + maxSummaryRows;
-            ws1.getCell(`I${totalRowIdx}`).value = '합계';
-            ws1.getCell(`J${totalRowIdx}`).value = intTotal;
-            ws1.getCell(`L${totalRowIdx}`).value = '합계';
-            ws1.getCell(`M${totalRowIdx}`).value = natTotal;
-
-            ['I', 'J', 'L', 'M'].forEach(col => {
-                const cell = ws1.getCell(`${col}${totalRowIdx}`);
+                const colLetter = getColLetter(12 + wIdx);
+                ws1.getCell(`${colLetter}${totalRowIdx}`).value = weekTotal;
+            });
+            
+            // Grand total
+            let grandTotal = 0;
+            sortedStudents.forEach(student => {
+                weeks.forEach(w => {
+                    grandTotal += calculateStudentHoursForRange(student, selectedYear, selectedMonth, w.startDay, w.endDay);
+                });
+            });
+            ws1.getCell(`${totalColLetter}${totalRowIdx}`).value = grandTotal;
+            
+            // Diff total
+            let diffTotal = 0;
+            sortedStudents.forEach(student => {
+                const limit = student.monthlyLimit !== undefined ? student.monthlyLimit : settings.maxMonthlyLimit;
+                let studentTotal = 0;
+                weeks.forEach(w => {
+                    studentTotal += calculateStudentHoursForRange(student, selectedYear, selectedMonth, w.startDay, w.endDay);
+                });
+                diffTotal += (studentTotal - limit);
+            });
+            ws1.getCell(`${diffColLetter}${totalRowIdx}`).value = diffTotal > 0 ? `+${diffTotal}` : diffTotal;
+            
+            // Style total row
+            for (let c = tableStartCol; c <= tableEndCol; c++) {
+                const cell = ws1.getCell(`${getColLetter(c)}${totalRowIdx}`);
                 cell.font = { name: '맑은 고딕', size: 9, bold: true, color: { argb: 'FF1E293B' } };
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
                 cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -3872,7 +4015,7 @@ async function exportToExcel() {
                     left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
                     right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
                 };
-            });
+            }
         }
 
         // ----------------------------------------------------
@@ -4117,6 +4260,11 @@ function editStudent(studentId) {
     document.getElementById('edit-student-name').value = student.name;
     document.getElementById('edit-student-type').value = student.type;
     
+    const limitEditInput = document.getElementById('edit-student-monthly-limit');
+    if (limitEditInput) {
+        limitEditInput.value = student.monthlyLimit !== undefined ? student.monthlyLimit : 120;
+    }
+    
     const editStudentVariable = document.getElementById('edit-student-variable');
     editStudentVariable.checked = !!student.isVariable;
     
@@ -4272,11 +4420,15 @@ function saveStudentEdit() {
         return;
     }
     
+    const limitEditInput = document.getElementById('edit-student-monthly-limit');
+    const monthlyLimit = limitEditInput ? parseInt(limitEditInput.value, 10) : 120;
+
     // Update student
     student.name = name;
     student.type = type;
     student.isVariable = isVariable;
     student.schedules = schedules;
+    student.monthlyLimit = monthlyLimit;
     
     saveData();
     closeStudentModal();
@@ -5137,6 +5289,205 @@ function showCurrentWorkers() {
 
     currentWorkersModal.classList.add('show');
 }
+
+// ==========================================
+// NEW: WEEKLY WORKING HOURS BREAKDOWN MODULE
+// ==========================================
+
+function getWeeksOfMonth(year, month) {
+    const numDays = new Date(year, month, 0).getDate();
+    const weeks = [];
+    let currentWeek = { startDay: 1, endDay: 1 };
+    
+    for (let d = 1; d <= numDays; d++) {
+        const dateObj = new Date(year, month - 1, d);
+        const dayOfWeek = dateObj.getDay(); // 0: Sunday, 1: Monday, etc.
+        
+        currentWeek.endDay = d;
+        
+        if (dayOfWeek === 0 || d === numDays) {
+            weeks.push({
+                weekIndex: weeks.length + 1,
+                startDay: currentWeek.startDay,
+                endDay: currentWeek.endDay
+            });
+            if (d < numDays) {
+                currentWeek = { startDay: d + 1, endDay: d + 1 };
+            }
+        }
+    }
+    return weeks;
+}
+
+function calculateStudentHoursForRange(student, year, month, startDay, endDay) {
+    let total = 0;
+    for (let d = startDay; d <= endDay; d++) {
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const daySchedules = getSchedulesForDate(dateStr);
+        daySchedules.forEach(sched => {
+            if (sched.studentName === student.name) {
+                const hours = Math.max(0, sched.endHour - sched.startHour - (sched.hasMeal ? 1 : 0));
+                total += hours;
+            }
+        });
+    }
+    return total;
+}
+
+function renderMonthlyWeeklyBreakdown() {
+    const breakdownDiv = document.getElementById('monthly-weekly-breakdown-container');
+    if (!breakdownDiv) return;
+
+    if (currentView !== 'monthly' || students.length === 0 || !isAdmin) {
+        breakdownDiv.innerHTML = '';
+        breakdownDiv.style.display = 'none';
+        return;
+    }
+    
+    breakdownDiv.style.display = 'block';
+    
+    const settings = getSystemSettings();
+    const weeks = getWeeksOfMonth(selectedYear, selectedMonth);
+    
+    let tableHtml = `
+        <div class="panel-header" style="margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+            <h2>📊 주당 근로시간 상세 현황 (${selectedMonth}월)</h2>
+        </div>
+        <div class="table-responsive" style="margin-top: 1rem;">
+            <table class="student-table monthly-weekly-table">
+                <thead>
+                    <tr>
+                        <th>구분</th>
+                        <th>이름</th>
+                        <th>시간/월</th>
+                        ${weeks.map(w => `<th>${w.weekIndex}주</th>`).join('')}
+                        <th>합계</th>
+                        <th>초과시간</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    students.forEach(student => {
+        const limit = student.monthlyLimit !== undefined ? student.monthlyLimit : settings.maxMonthlyLimit;
+        const color = getStudentColor(student);
+        const typeBadge = `<span class="badge-type ${student.type === '집중' ? 'intensive' : 'semester'}">${student.type}근로</span>`;
+        
+        let total = 0;
+        const weekHours = [];
+        
+        weeks.forEach(w => {
+            const hrs = calculateStudentHoursForRange(student, selectedYear, selectedMonth, w.startDay, w.endDay);
+            weekHours.push(hrs);
+            total += hrs;
+        });
+        
+        const diff = total - limit;
+        let diffClass = '';
+        let diffText = diff > 0 ? `+${diff}` : `${diff}`;
+        
+        if (diff === 0) {
+            diffClass = 'diff-zero';
+        } else if (diff < 0) {
+            diffClass = 'diff-negative';
+        } else {
+            diffClass = 'diff-positive';
+        }
+        
+        const maxWeekly = student.type === '집중' ? settings.maxWeeklyIntensive : settings.maxWeeklySemester;
+        let weekCellsHtml = '';
+        weekHours.forEach(hrs => {
+            const isExceeded = hrs > maxWeekly;
+            const cellStyle = isExceeded ? 'background-color: #fee2e2; color: #b91c1c; font-weight: bold; border: 1px solid #fecaca;' : '';
+            const cellTitle = isExceeded ? `title="주당 최대 근로시간(${maxWeekly}h) 초과!"` : '';
+            weekCellsHtml += `<td style="${cellStyle}" ${cellTitle}>${hrs}${isExceeded ? ' ⚠️' : ''}</td>`;
+        });
+        
+        tableHtml += `
+            <tr>
+                <td>${typeBadge}</td>
+                <td>
+                    <div class="student-name-container">
+                        <div class="color-preview-btn" style="background-color: ${color.bg}; border-color: ${color.border}; cursor: default;"></div>
+                        <strong>${student.name}</strong>
+                    </div>
+                </td>
+                <td><span class="limit-val">${limit}</span></td>
+                ${weekCellsHtml}
+                <td><strong>${total}</strong></td>
+                <td><span class="diff-badge ${diffClass}">${diffText}</span></td>
+            </tr>
+        `;
+    });
+    
+    tableHtml += `
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    breakdownDiv.innerHTML = tableHtml;
+}
+
+function initMonthlyLimitInputs() {
+    const btnSaveSettings = document.getElementById('btn-save-settings');
+    if (btnSaveSettings) {
+        btnSaveSettings.addEventListener('click', saveSystemSettings);
+    }
+}
+
+function getSystemSettings() {
+    const defaultSettings = {
+        maxWeeklyIntensive: 40,
+        maxWeeklySemester: 20,
+        maxMonthlyLimit: 120
+    };
+    
+    if (exceptions && exceptions["__settings__"]) {
+        return {
+            maxWeeklyIntensive: parseInt(exceptions["__settings__"].maxWeeklyIntensive, 10) || 40,
+            maxWeeklySemester: parseInt(exceptions["__settings__"].maxWeeklySemester, 10) || 20,
+            maxMonthlyLimit: parseInt(exceptions["__settings__"].maxMonthlyLimit, 10) || 120
+        };
+    }
+    return defaultSettings;
+}
+
+function saveSystemSettings() {
+    if (!isAdmin) return;
+    
+    const maxWeeklyIntensive = parseInt(document.getElementById('setting-max-weekly-intensive').value, 10) || 40;
+    const maxWeeklySemester = parseInt(document.getElementById('setting-max-weekly-semester').value, 10) || 20;
+    const maxMonthlyLimit = parseInt(document.getElementById('setting-default-monthly-limit').value, 10) || 120;
+    
+    if (!exceptions) {
+        exceptions = {};
+    }
+    
+    exceptions["__settings__"] = {
+        maxWeeklyIntensive,
+        maxWeeklySemester,
+        maxMonthlyLimit
+    };
+    
+    saveData();
+    updateUI();
+    alert('근로 기준 시간 설정이 저장되었습니다!');
+}
+
+function syncSettingsInputs() {
+    const settings = getSystemSettings();
+    const inputIntensive = document.getElementById('setting-max-weekly-intensive');
+    const inputSemester = document.getElementById('setting-max-weekly-semester');
+    const inputMonthly = document.getElementById('setting-default-monthly-limit');
+    const formMonthly = document.getElementById('form-monthly-limit');
+    
+    if (inputIntensive) inputIntensive.value = settings.maxWeeklyIntensive;
+    if (inputSemester) inputSemester.value = settings.maxWeeklySemester;
+    if (inputMonthly) inputMonthly.value = settings.maxMonthlyLimit;
+    if (formMonthly && !formMonthly.value) formMonthly.value = settings.maxMonthlyLimit;
+}
+
 
 
 
